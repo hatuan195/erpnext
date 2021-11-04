@@ -410,7 +410,7 @@ class StockEntry(StockController):
 				from `tabStock Entry Detail`
 				where parent in (%s)
 					and item_code = %s
-					and ifnull(s_warehouse,'')='' """ % (", ".join(["%s" * len(other_ste)]), "%s"), args)[0][0]
+					and ifnull(s_warehouse,'')='' """ % (", ".join(["%s"] * len(other_ste)), "%s"), args)[0][0]
 			if fg_qty_already_entered and fg_qty_already_entered >= qty:
 				frappe.throw(
 					_("Stock Entries already created for Work Order {0}: {1}").format(
