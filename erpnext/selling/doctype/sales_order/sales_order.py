@@ -1,7 +1,6 @@
 # Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
-from __future__ import unicode_literals
 
 import json
 
@@ -13,7 +12,6 @@ from frappe.desk.notifications import clear_doctype_notifications
 from frappe.model.mapper import get_mapped_doc
 from frappe.model.utils import get_fetch_values
 from frappe.utils import add_days, cint, cstr, flt, get_link_to_form, getdate, nowdate, strip_html
-from six import string_types
 
 from erpnext.accounts.doctype.sales_invoice.sales_invoice import (
 	unlink_inter_company_doc,
@@ -64,6 +62,8 @@ class SalesOrder(SellingController):
 
 		if not self.billing_status: self.billing_status = 'Not Billed'
 		if not self.delivery_status: self.delivery_status = 'Not Delivered'
+
+		self.reset_default_field_value("set_warehouse", "items", "warehouse")
 
 	def validate_po(self):
 		# validate p.o date v/s delivery date
@@ -225,60 +225,15 @@ class SalesOrder(SellingController):
 			check_credit_limit(self.customer, self.company)
 
 	def check_nextdoc_docstatus(self):
-		# Checks Delivery Note
-		submit_dn = frappe.db.sql_list("""
-			select t1.name
-			from `tabDelivery Note` t1,`tabDelivery Note Item` t2
-			where t1.name = t2.parent and t2.against_sales_order = %s and t1.docstatus = 1""", self.name)
-
-		if submit_dn:
-			submit_dn = [get_link_to_form("Delivery Note", dn) for dn in submit_dn]
-			frappe.throw(_("Delivery Notes {0} must be cancelled before cancelling this Sales Order")
-				.format(", ".join(submit_dn)))
-
-		# Checks Sales Invoice
-		submit_rv = frappe.db.sql_list("""select t1.name
+		linked_invoices = frappe.db.sql_list("""select distinct t1.name
 			from `tabSales Invoice` t1,`tabSales Invoice Item` t2
-			where t1.name = t2.parent and t2.sales_order = %s and t1.docstatus < 2""",
+			where t1.name = t2.parent and t2.sales_order = %s and t1.docstatus = 0""",
 			self.name)
 
-		if submit_rv:
-			submit_rv = [get_link_to_form("Sales Invoice", si) for si in submit_rv]
-			frappe.throw(_("Sales Invoice {0} must be cancelled before cancelling this Sales Order")
-				.format(", ".join(submit_rv)))
-
-		#check maintenance schedule
-		submit_ms = frappe.db.sql_list("""
-			select t1.name
-			from `tabMaintenance Schedule` t1, `tabMaintenance Schedule Item` t2
-			where t2.parent=t1.name and t2.sales_order = %s and t1.docstatus = 1""", self.name)
-
-		if submit_ms:
-			submit_ms = [get_link_to_form("Maintenance Schedule", ms) for ms in submit_ms]
-			frappe.throw(_("Maintenance Schedule {0} must be cancelled before cancelling this Sales Order")
-				.format(", ".join(submit_ms)))
-
-		# check maintenance visit
-		submit_mv = frappe.db.sql_list("""
-			select t1.name
-			from `tabMaintenance Visit` t1, `tabMaintenance Visit Purpose` t2
-			where t2.parent=t1.name and t2.prevdoc_docname = %s and t1.docstatus = 1""",self.name)
-
-		if submit_mv:
-			submit_mv = [get_link_to_form("Maintenance Visit", mv) for mv in submit_mv]
-			frappe.throw(_("Maintenance Visit {0} must be cancelled before cancelling this Sales Order")
-				.format(", ".join(submit_mv)))
-
-		# check work order
-		pro_order = frappe.db.sql_list("""
-			select name
-			from `tabWork Order`
-			where sales_order = %s and docstatus = 1""", self.name)
-
-		if pro_order:
-			pro_order = [get_link_to_form("Work Order", po) for po in pro_order]
-			frappe.throw(_("Work Order {0} must be cancelled before cancelling this Sales Order")
-				.format(", ".join(pro_order)))
+		if linked_invoices:
+			linked_invoices = [get_link_to_form("Sales Invoice", si) for si in linked_invoices]
+			frappe.throw(_("Sales Invoice {0} must be deleted before cancelling this Sales Order")
+				.format(", ".join(linked_invoices)))
 
 	def check_modified_date(self):
 		mod_db = frappe.db.get_value("Sales Order", self.name, "modified")
@@ -565,7 +520,6 @@ def make_project(source_name, target_doc=None):
 @frappe.whitelist()
 def make_delivery_note(source_name, target_doc=None, skip_item_mapping=False):
 	def set_missing_values(source, target):
-		target.ignore_pricing_rule = 1
 		target.run_method("set_missing_values")
 		target.run_method("set_po_nos")
 		target.run_method("calculate_taxes_and_totals")
@@ -610,6 +564,13 @@ def make_delivery_note(source_name, target_doc=None, skip_item_mapping=False):
 	}
 
 	if not skip_item_mapping:
+		def condition(doc):
+			# make_mapped_doc sets js `args` into `frappe.flags.args`
+			if frappe.flags.args and frappe.flags.args.delivery_dates:
+				if cstr(doc.delivery_date) not in frappe.flags.args.delivery_dates:
+					return False
+			return abs(doc.delivered_qty) < abs(doc.qty) and doc.delivered_by_supplier!=1
+
 		mapper["Sales Order Item"] = {
 			"doctype": "Delivery Note Item",
 			"field_map": {
@@ -618,10 +579,12 @@ def make_delivery_note(source_name, target_doc=None, skip_item_mapping=False):
 				"parent": "against_sales_order",
 			},
 			"postprocess": update_item,
-			"condition": lambda doc: abs(doc.delivered_qty) < abs(doc.qty) and doc.delivered_by_supplier!=1
+			"condition": condition
 		}
 
 	target_doc = get_mapped_doc("Sales Order", source_name, mapper, target_doc, set_missing_values)
+
+	target_doc.set_onload('ignore_price_list', True)
 
 	return target_doc
 
@@ -634,7 +597,6 @@ def make_sales_invoice(source_name, target_doc=None, ignore_permissions=False):
 			target.set_advances()
 
 	def set_missing_values(source, target):
-		target.ignore_pricing_rule = 1
 		target.flags.ignore_permissions = True
 		target.run_method("set_missing_values")
 		target.run_method("set_po_nos")
@@ -703,6 +665,8 @@ def make_sales_invoice(source_name, target_doc=None, ignore_permissions=False):
 	automatically_fetch_payment_terms = cint(frappe.db.get_single_value('Accounts Settings', 'automatically_fetch_payment_terms'))
 	if automatically_fetch_payment_terms:
 		doclist.set_payment_schedule()
+
+	doclist.set_onload('ignore_price_list', True)
 
 	return doclist
 
@@ -791,7 +755,7 @@ def make_purchase_order_for_default_supplier(source_name, selected_items=None, t
 	"""Creates Purchase Order for each Supplier. Returns a list of doc objects."""
 	if not selected_items: return
 
-	if isinstance(selected_items, string_types):
+	if isinstance(selected_items, str):
 		selected_items = json.loads(selected_items)
 
 	def set_missing_values(source, target):
@@ -892,7 +856,7 @@ def make_purchase_order_for_default_supplier(source_name, selected_items=None, t
 def make_purchase_order(source_name, selected_items=None, target_doc=None):
 	if not selected_items: return
 
-	if isinstance(selected_items, string_types):
+	if isinstance(selected_items, str):
 		selected_items = json.loads(selected_items)
 
 	items_to_map = [item.get('item_code') for item in selected_items if item.get('item_code') and item.get('item_code')]
@@ -914,6 +878,9 @@ def make_purchase_order(source_name, selected_items=None, target_doc=None):
 		target.qty = flt(source.qty) - (flt(source.ordered_qty) / flt(source.conversion_factor))
 		target.stock_qty = (flt(source.stock_qty) - flt(source.ordered_qty))
 		target.project = source_parent.project
+
+	def update_item_for_packed_item(source, target, source_parent):
+		target.qty = flt(source.qty) - flt(source.ordered_qty)
 
 	# po = frappe.get_list("Purchase Order", filters={"sales_order":source_name, "supplier":supplier, "docstatus": ("<", "2")})
 	doc = get_mapped_doc("Sales Order", source_name, {
@@ -958,6 +925,7 @@ def make_purchase_order(source_name, selected_items=None, target_doc=None):
 		"Packed Item": {
 			"doctype": "Purchase Order Item",
 			"field_map":  [
+				["name", "sales_order_packed_item"],
 				["parent", "sales_order"],
 				["uom", "uom"],
 				["conversion_factor", "conversion_factor"],
@@ -972,6 +940,8 @@ def make_purchase_order(source_name, selected_items=None, target_doc=None):
 				"supplier",
 				"pricing_rules"
 			],
+			"postprocess": update_item_for_packed_item,
+			"condition": lambda doc: doc.parent_item in items_to_map
 		}
 	}, target_doc, set_missing_values)
 
@@ -1024,6 +994,7 @@ def make_work_orders(items, sales_order, company, project=None):
 			description=i['description']
 		)).insert()
 		work_order.set_work_order_operations()
+		work_order.flags.ignore_mandatory = True
 		work_order.save()
 		out.append(work_order)
 
@@ -1046,7 +1017,7 @@ def make_raw_material_request(items, company, sales_order, project=None):
 	if not frappe.has_permission("Sales Order", "write"):
 		frappe.throw(_("Not permitted"), frappe.PermissionError)
 
-	if isinstance(items, string_types):
+	if isinstance(items, str):
 		items = frappe._dict(json.loads(items))
 
 	for item in items.get('items'):

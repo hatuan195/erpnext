@@ -4,7 +4,10 @@ on:
   pull_request:
     paths-ignore:
       - '**.js'
+      - '**.css'
       - '**.md'
+      - '**.html'
+      - '**.csv'
   workflow_dispatch:
 
 concurrency:
@@ -34,7 +37,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v2
         with:
-          python-version: 3.7
+          python-version: 3.8
 
       - name: Setup Node
         uses: actions/setup-node@v2
@@ -80,6 +83,9 @@ jobs:
 
       - name: Install
         run: bash ${GITHUB_WORKSPACE}/.github/helper/install.sh
+        env:
+          DB: mariadb
+          TYPE: server
 
       - name: Run Patch Tests
         run: |
@@ -93,7 +99,7 @@ jobs:
           for version in $(seq 12 13)
           do
               echo "Updating to v$version"
-              branch_name="version-$version"
+              branch_name="version-$version-hotfix"
 
               git -C "apps/frappe" fetch --depth 1 upstream $branch_name:$branch_name
               git -C "apps/erpnext" fetch --depth 1 upstream $branch_name:$branch_name

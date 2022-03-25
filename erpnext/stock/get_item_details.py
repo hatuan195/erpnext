@@ -1,15 +1,14 @@
 # Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
-from __future__ import unicode_literals
 
 import json
 
 import frappe
 from frappe import _, throw
+from frappe.model import child_table_fields, default_fields
 from frappe.model.meta import get_field_precision
 from frappe.utils import add_days, add_months, cint, cstr, flt, getdate
-from six import iteritems, string_types
 
 from erpnext import get_company_currency
 from erpnext.accounts.doctype.pricing_rule.pricing_rule import (
@@ -59,7 +58,7 @@ def get_item_details(args, doc=None, for_validate=False, overwrite_warehouse=Tru
 
 	out = get_basic_details(args, item, overwrite_warehouse)
 
-	if isinstance(doc, string_types):
+	if isinstance(doc, str):
 		doc = json.loads(doc)
 
 	if doc and doc.get('doctype') == 'Purchase Invoice':
@@ -98,7 +97,7 @@ def get_item_details(args, doc=None, for_validate=False, overwrite_warehouse=Tru
 		out.update(bin_details)
 
 	# update args with out, if key or value not exists
-	for key, value in iteritems(out):
+	for key, value in out.items():
 		if args.get(key) is None:
 			args[key] = value
 
@@ -121,7 +120,14 @@ def get_item_details(args, doc=None, for_validate=False, overwrite_warehouse=Tru
 		out.rate = args.rate or out.price_list_rate
 		out.amount = flt(args.qty) * flt(out.rate)
 
+	out = remove_standard_fields(out)
 	return out
+
+def remove_standard_fields(details):
+	for key in child_table_fields + default_fields:
+		details.pop(key, None)
+	return details
+
 
 def update_stock(args, out):
 	if (args.get("doctype") == "Delivery Note" or
@@ -163,7 +169,7 @@ def set_valuation_rate(out, args):
 
 
 def process_args(args):
-	if isinstance(args, string_types):
+	if isinstance(args, str):
 		args = json.loads(args)
 
 	args = frappe._dict(args)
@@ -180,7 +186,7 @@ def process_args(args):
 	return args
 
 def process_string_args(args):
-	if isinstance(args, string_types):
+	if isinstance(args, str):
 		args = json.loads(args)
 	return args
 
@@ -301,7 +307,7 @@ def get_basic_details(args, item, overwrite_warehouse=True):
 		"warehouse": warehouse,
 		"income_account": get_default_income_account(args, item_defaults, item_group_defaults, brand_defaults),
 		"expense_account": expense_account or get_default_expense_account(args, item_defaults, item_group_defaults, brand_defaults) ,
-		"discount_account": None or get_default_discount_account(args, item_defaults),
+		"discount_account": get_default_discount_account(args, item_defaults),
 		"cost_center": get_default_cost_center(args, item_defaults, item_group_defaults, brand_defaults),
 		'has_serial_no': item.has_serial_no,
 		'has_batch_no': item.has_batch_no,
@@ -319,6 +325,7 @@ def get_basic_details(args, item, overwrite_warehouse=True):
 		"net_rate": 0.0,
 		"net_amount": 0.0,
 		"discount_percentage": 0.0,
+		"discount_amount": 0.0,
 		"supplier": get_default_supplier(args, item_defaults, item_group_defaults, brand_defaults),
 		"update_stock": args.get("update_stock") if args.get('doctype') in ['Sales Invoice', 'Purchase Invoice'] else 0,
 		"delivered_by_supplier": item.delivered_by_supplier if args.get("doctype") in ["Sales Order", "Sales Invoice"] else 0,
@@ -328,7 +335,8 @@ def get_basic_details(args, item, overwrite_warehouse=True):
 		"against_blanket_order": args.get("against_blanket_order"),
 		"bom_no": item.get("default_bom"),
 		"weight_per_unit": args.get("weight_per_unit") or item.get("weight_per_unit"),
-		"weight_uom": args.get("weight_uom") or item.get("weight_uom")
+		"weight_uom": args.get("weight_uom") or item.get("weight_uom"),
+		"grant_commission": item.get("grant_commission")
 	})
 
 	if item.get("enable_deferred_revenue") or item.get("enable_deferred_expense"):
@@ -343,6 +351,7 @@ def get_basic_details(args, item, overwrite_warehouse=True):
 
 	args.conversion_factor = out.conversion_factor
 	out.stock_qty = out.qty * out.conversion_factor
+	args.stock_qty = out.stock_qty
 
 	# calculate last purchase rate
 	if args.get('doctype') in purchase_doctypes:
@@ -358,7 +367,7 @@ def get_basic_details(args, item, overwrite_warehouse=True):
 			if not out[d[1]]:
 				out[d[1]] = frappe.get_cached_value('Company',  args.company,  d[2]) if d[2] else None
 
-	for fieldname in ("item_name", "item_group", "barcodes", "brand", "stock_uom"):
+	for fieldname in ("item_name", "item_group", "brand", "stock_uom"):
 		out[fieldname] = item.get(fieldname)
 
 	if args.get("manufacturer"):
@@ -708,7 +717,7 @@ def insert_item_price(args):
 				{'item_code': args.item_code, 'price_list': args.price_list, 'currency': args.currency},
 				['name', 'price_list_rate'], as_dict=1)
 			if item_price and item_price.name:
-				if item_price.price_list_rate != price_list_rate:
+				if item_price.price_list_rate != price_list_rate and frappe.db.get_single_value('Stock Settings', 'update_existing_price_list_rate'):
 					frappe.db.set_value('Item Price', item_price.name, "price_list_rate", price_list_rate)
 					frappe.msgprint(_("Item Price updated for {0} in Price List {1}").format(args.item_code,
 						args.price_list), alert=True)
@@ -1097,7 +1106,7 @@ def apply_price_list(args, as_doc=False):
 		}
 
 def apply_price_list_on_item(args):
-	item_doc = frappe.get_doc("Item", args.item_code)
+	item_doc = frappe.db.get_value("Item", args.item_code, ['name', 'variant_of'], as_dict=1)
 	item_details = get_price_list_rate(args, item_doc)
 
 	item_details.update(get_pricing_rule_for_item(args, item_details.price_list_rate))
@@ -1174,7 +1183,7 @@ def get_gross_profit(out):
 @frappe.whitelist()
 def get_serial_no(args, serial_nos=None, sales_order=None):
 	serial_no = None
-	if isinstance(args, string_types):
+	if isinstance(args, str):
 		args = json.loads(args)
 		args = frappe._dict(args)
 	if args.get('doctype') == 'Sales Invoice' and not args.get('update_stock'):
@@ -1203,7 +1212,7 @@ def update_party_blanket_order(args, out):
 
 @frappe.whitelist()
 def get_blanket_order_details(args):
-	if isinstance(args, string_types):
+	if isinstance(args, str):
 		args = frappe._dict(json.loads(args))
 
 	blanket_order_details = None

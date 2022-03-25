@@ -1,16 +1,21 @@
 # Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
-from __future__ import unicode_literals
 
 import json
-import unittest
 
 import frappe
 import frappe.permissions
 from frappe.core.doctype.user_permission.test_user_permission import create_user
-from frappe.utils import add_days, flt, getdate, nowdate
+from frappe.tests.utils import FrappeTestCase
+from frappe.utils import add_days, flt, getdate, nowdate, today
 
 from erpnext.controllers.accounts_controller import update_child_qty_rate
+from erpnext.maintenance.doctype.maintenance_schedule.test_maintenance_schedule import (
+	make_maintenance_schedule,
+)
+from erpnext.maintenance.doctype.maintenance_visit.test_maintenance_visit import (
+	make_maintenance_visit,
+)
 from erpnext.manufacturing.doctype.blanket_order.test_blanket_order import make_blanket_order
 from erpnext.selling.doctype.product_bundle.test_product_bundle import make_product_bundle
 from erpnext.selling.doctype.sales_order.sales_order import (
@@ -25,10 +30,11 @@ from erpnext.stock.doctype.item.test_item import make_item
 from erpnext.stock.doctype.stock_entry.stock_entry_utils import make_stock_entry
 
 
-class TestSalesOrder(unittest.TestCase):
+class TestSalesOrder(FrappeTestCase):
 
 	@classmethod
 	def setUpClass(cls):
+		super().setUpClass()
 		cls.unlink_setting = int(frappe.db.get_value("Accounts Settings", "Accounts Settings",
 			"unlink_advance_payment_on_cancelation_of_order"))
 
@@ -37,6 +43,7 @@ class TestSalesOrder(unittest.TestCase):
 		# reset config to previous state
 		frappe.db.set_value("Accounts Settings", "Accounts Settings",
 			"unlink_advance_payment_on_cancelation_of_order", cls.unlink_setting)
+		super().tearDownClass()
 
 	def tearDown(self):
 		frappe.set_user("Administrator")
@@ -952,6 +959,42 @@ class TestSalesOrder(unittest.TestCase):
 		self.assertEqual(purchase_order.items[0].item_code, "_Test Bundle Item 1")
 		self.assertEqual(purchase_order.items[1].item_code, "_Test Bundle Item 2")
 
+	def test_purchase_order_updates_packed_item_ordered_qty(self):
+		"""
+			Tests if the packed item's `ordered_qty` is updated with the quantity of the Purchase Order
+		"""
+		from erpnext.selling.doctype.sales_order.sales_order import make_purchase_order
+
+		product_bundle = make_item("_Test Product Bundle", {"is_stock_item": 0})
+		make_item("_Test Bundle Item 1", {"is_stock_item": 1})
+		make_item("_Test Bundle Item 2", {"is_stock_item": 1})
+
+		make_product_bundle("_Test Product Bundle",
+			["_Test Bundle Item 1", "_Test Bundle Item 2"])
+
+		so_items = [
+			{
+				"item_code": product_bundle.item_code,
+				"warehouse": "",
+				"qty": 2,
+				"rate": 400,
+				"delivered_by_supplier": 1,
+				"supplier": '_Test Supplier'
+			}
+		]
+
+		so = make_sales_order(item_list=so_items)
+
+		purchase_order = make_purchase_order(so.name, selected_items=so_items)
+		purchase_order.supplier = "_Test Supplier"
+		purchase_order.set_warehouse = "_Test Warehouse - _TC"
+		purchase_order.save()
+		purchase_order.submit()
+
+		so.reload()
+		self.assertEqual(so.packed_items[0].ordered_qty, 2)
+		self.assertEqual(so.packed_items[1].ordered_qty, 2)
+
 	def test_reserved_qty_for_closing_so(self):
 		bin = frappe.get_all("Bin", filters={"item_code": "_Test Item", "warehouse": "_Test Warehouse - _TC"},
 			fields=["reserved_qty"])
@@ -1279,6 +1322,72 @@ class TestSalesOrder(unittest.TestCase):
 
 		self.assertRaises(frappe.ValidationError, so.cancel)
 
+	def test_so_cancellation_after_si_submission(self):
+		"""
+			Test to check if Sales Order gets cancelled when linked Sales Invoice has been Submitted
+			Expected result: Sales Order should not get cancelled
+		"""
+		so = make_sales_order()
+		so.submit()
+		si = make_sales_invoice(so.name)
+		si.submit()
+
+		so.load_from_db()
+		self.assertRaises(frappe.LinkExistsError, so.cancel)
+
+	def test_so_cancellation_after_dn_submission(self):
+		"""
+			Test to check if Sales Order gets cancelled when linked Delivery Note has been Submitted
+			Expected result: Sales Order should not get cancelled
+		"""
+		so = make_sales_order()
+		so.submit()
+		dn = make_delivery_note(so.name)
+		dn.submit()
+
+		so.load_from_db()
+		self.assertRaises(frappe.LinkExistsError, so.cancel)
+
+	def test_so_cancellation_after_maintenance_schedule_submission(self):
+		"""
+			Expected result: Sales Order should not get cancelled
+		"""
+		so = make_sales_order()
+		so.submit()
+		ms = make_maintenance_schedule()
+		ms.items[0].sales_order = so.name
+		ms.submit()
+
+		so.load_from_db()
+		self.assertRaises(frappe.LinkExistsError, so.cancel)
+
+	def test_so_cancellation_after_maintenance_visit_submission(self):
+		"""
+			Expected result: Sales Order should not get cancelled
+		"""
+		so = make_sales_order()
+		so.submit()
+		mv = make_maintenance_visit()
+		mv.purposes[0].prevdoc_doctype = "Sales Order"
+		mv.purposes[0].prevdoc_docname = so.name
+		mv.submit()
+
+		so.load_from_db()
+		self.assertRaises(frappe.LinkExistsError, so.cancel)
+
+	def test_so_cancellation_after_work_order_submission(self):
+		"""
+			Expected result: Sales Order should not get cancelled
+		"""
+		from erpnext.manufacturing.doctype.work_order.test_work_order import make_wo_order_test_record
+
+		so = make_sales_order(item_code="_Test FG Item", qty=10)
+		so.submit()
+		make_wo_order_test_record(sales_order=so.name)
+
+		so.load_from_db()
+		self.assertRaises(frappe.LinkExistsError, so.cancel)
+
 	def test_payment_terms_are_fetched_when_creating_sales_invoice(self):
 		from erpnext.accounts.doctype.payment_entry.test_payment_entry import (
 			create_payment_terms_template,
@@ -1301,6 +1410,94 @@ class TestSalesOrder(unittest.TestCase):
 		compare_payment_schedules(self, so, si)
 
 		automatically_fetch_payment_terms(enable=0)
+
+	def test_zero_amount_sales_order_billing_status(self):
+		from erpnext.accounts.doctype.sales_invoice.test_sales_invoice import create_sales_invoice
+
+		so = make_sales_order(uom="Nos", do_not_save=1)
+		so.items[0].rate = 0
+		so.save()
+		so.submit()
+
+		self.assertEqual(so.net_total, 0)
+		self.assertEqual(so.billing_status, 'Not Billed')
+
+		si = create_sales_invoice(qty=10, do_not_save=1)
+		si.price_list = '_Test Price List'
+		si.items[0].rate = 0
+		si.items[0].price_list_rate = 0
+		si.items[0].sales_order = so.name
+		si.items[0].so_detail = so.items[0].name
+		si.save()
+		si.submit()
+
+		self.assertEqual(si.net_total, 0)
+		so.load_from_db()
+		self.assertEqual(so.billing_status, 'Fully Billed')
+
+	def test_so_back_updated_from_wo_via_mr(self):
+		"SO -> MR (Manufacture) -> WO. Test if WO Qty is updated in SO."
+		from erpnext.manufacturing.doctype.work_order.work_order import (
+			make_stock_entry as make_se_from_wo,
+		)
+		from erpnext.stock.doctype.material_request.material_request import raise_work_orders
+
+		so = make_sales_order(item_list=[{"item_code": "_Test FG Item","qty": 2, "rate":100}])
+
+		mr = make_material_request(so.name)
+		mr.material_request_type = "Manufacture"
+		mr.schedule_date = today()
+		mr.submit()
+
+		# WO from MR
+		wo_name = raise_work_orders(mr.name)[0]
+		wo = frappe.get_doc("Work Order", wo_name)
+		wo.wip_warehouse = "Work In Progress - _TC"
+		wo.skip_transfer = True
+
+		self.assertEqual(wo.sales_order, so.name)
+		self.assertEqual(wo.sales_order_item, so.items[0].name)
+
+		wo.submit()
+		make_stock_entry(item_code="_Test Item", # Stock RM
+			target="Work In Progress - _TC",
+			qty=4, basic_rate=100
+		)
+		make_stock_entry(item_code="_Test Item Home Desktop 100", # Stock RM
+			target="Work In Progress - _TC",
+			qty=4, basic_rate=100
+		)
+
+		se = frappe.get_doc(make_se_from_wo(wo.name, "Manufacture", 2))
+		se.submit() # Finish WO
+
+		mr.reload()
+		wo.reload()
+		so.reload()
+		self.assertEqual(so.items[0].work_order_qty, wo.produced_qty)
+		self.assertEqual(mr.status, "Manufactured")
+
+	def test_sales_order_with_shipping_rule(self):
+		from erpnext.accounts.doctype.shipping_rule.test_shipping_rule import create_shipping_rule
+		shipping_rule = create_shipping_rule(shipping_rule_type = "Selling", shipping_rule_name = "Shipping Rule - Sales Invoice Test")
+		sales_order = make_sales_order(do_not_save=True)
+		sales_order.shipping_rule = shipping_rule.name
+
+		sales_order.items[0].qty = 1
+		sales_order.save()
+		self.assertEqual(sales_order.taxes[0].tax_amount, 50)
+
+		sales_order.items[0].qty = 2
+		sales_order.save()
+		self.assertEqual(sales_order.taxes[0].tax_amount, 100)
+
+		sales_order.items[0].qty = 3
+		sales_order.save()
+		self.assertEqual(sales_order.taxes[0].tax_amount, 200)
+
+		sales_order.items[0].qty = 21
+		sales_order.save()
+		self.assertEqual(sales_order.taxes[0].tax_amount, 0)
 
 def automatically_fetch_payment_terms(enable=1):
 	accounts_settings = frappe.get_doc("Accounts Settings")

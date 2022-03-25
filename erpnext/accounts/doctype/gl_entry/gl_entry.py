@@ -1,7 +1,6 @@
 # Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
-from __future__ import unicode_literals
 
 import frappe
 from frappe import _
@@ -9,7 +8,6 @@ from frappe.model.document import Document
 from frappe.model.meta import get_field_precision
 from frappe.model.naming import set_name_from_naming_options
 from frappe.utils import flt, fmt_money
-from six import iteritems
 
 import erpnext
 from erpnext.accounts.doctype.accounting_dimension.accounting_dimension import (
@@ -34,6 +32,8 @@ class GLEntry(Document):
 		name will be changed using autoname options (in a scheduled job)
 		"""
 		self.name = frappe.generate_hash(txt="", length=10)
+		if self.meta.autoname == "hash":
+			self.to_rename = 0
 
 	def validate(self):
 		self.flags.ignore_submit_comment = True
@@ -116,7 +116,7 @@ class GLEntry(Document):
 
 	def validate_allowed_dimensions(self):
 		dimension_filter_map = get_dimension_filter_map()
-		for key, value in iteritems(dimension_filter_map):
+		for key, value in dimension_filter_map.items():
 			dimension = key[0]
 			account = key[1]
 
@@ -136,7 +136,7 @@ class GLEntry(Document):
 
 	def check_pl_account(self):
 		if self.is_opening=='Yes' and \
-				frappe.db.get_value("Account", self.account, "report_type")=="Profit and Loss":
+				frappe.db.get_value("Account", self.account, "report_type")=="Profit and Loss" and not self.is_cancelled:
 			frappe.throw(_("{0} {1}: 'Profit and Loss' type account {2} not allowed in Opening Entry")
 				.format(self.voucher_type, self.voucher_no, self.account))
 

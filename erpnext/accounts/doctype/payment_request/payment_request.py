@@ -1,8 +1,6 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-from __future__ import unicode_literals
 
 import json
 
@@ -293,7 +291,7 @@ class PaymentRequest(Document):
 		if not status:
 			return
 
-		shopping_cart_settings = frappe.get_doc("Shopping Cart Settings")
+		shopping_cart_settings = frappe.get_doc("E Commerce Settings")
 
 		if status in ["Authorized", "Completed"]:
 			redirect_to = None
@@ -437,13 +435,13 @@ def get_existing_payment_request_amount(ref_dt, ref_dn):
 	""", (ref_dt, ref_dn))
 	return flt(existing_payment_request_amount[0][0]) if existing_payment_request_amount else 0
 
-def get_gateway_details(args):
+def get_gateway_details(args): # nosemgrep
 	"""return gateway and payment account of default payment gateway"""
 	if args.get("payment_gateway_account"):
 		return get_payment_gateway_account(args.get("payment_gateway_account"))
 
 	if args.order_type == "Shopping Cart":
-		payment_gateway_account = frappe.get_doc("Shopping Cart Settings").payment_gateway_account
+		payment_gateway_account = frappe.get_doc("E Commerce Settings").payment_gateway_account
 		return get_payment_gateway_account(payment_gateway_account)
 
 	gateway_account = get_payment_gateway_account({"is_default": 1})
@@ -550,10 +548,14 @@ def make_payment_order(source_name, target_doc=None):
 
 	return doclist
 
-def validate_payment(doc, method=""):
-	if not frappe.db.has_column(doc.reference_doctype, 'status'):
+def validate_payment(doc, method=None):
+	if doc.reference_doctype != "Payment Request" or (
+		frappe.db.get_value(doc.reference_doctype, doc.reference_docname, 'status')
+		!= "Paid"
+	):
 		return
 
-	status = frappe.db.get_value(doc.reference_doctype, doc.reference_docname, 'status')
-	if status == 'Paid':
-		frappe.throw(_("The Payment Request {0} is already paid, cannot process payment twice").format(doc.reference_docname))
+	frappe.throw(
+		_("The Payment Request {0} is already paid, cannot process payment twice")
+		.format(doc.reference_docname)
+	)

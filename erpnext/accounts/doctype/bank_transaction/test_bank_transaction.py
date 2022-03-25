@@ -1,7 +1,5 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2018, Frappe Technologies Pvt. Ltd. and Contributors
 # See license.txt
-from __future__ import unicode_literals
 
 import json
 import unittest
@@ -111,7 +109,7 @@ def create_bank_account(bank_name="Citi Bank", account_name="_Test Bank - _TC"):
 		frappe.get_doc({
 			"doctype": "Bank",
 			"bank_name":bank_name,
-		}).insert()
+		}).insert(ignore_if_duplicate=True)
 	except frappe.DuplicateEntryError:
 		pass
 
@@ -121,7 +119,7 @@ def create_bank_account(bank_name="Citi Bank", account_name="_Test Bank - _TC"):
 			"account_name":"Checking Account",
 			"bank": bank_name,
 			"account": account_name
-		}).insert()
+		}).insert(ignore_if_duplicate=True)
 	except frappe.DuplicateEntryError:
 		pass
 
@@ -186,7 +184,7 @@ def add_vouchers():
 			"supplier_group":"All Supplier Groups",
 			"supplier_type": "Company",
 			"supplier_name": "Conrad Electronic"
-		}).insert()
+		}).insert(ignore_if_duplicate=True)
 
 	except frappe.DuplicateEntryError:
 		pass
@@ -205,7 +203,7 @@ def add_vouchers():
 			"supplier_group":"All Supplier Groups",
 			"supplier_type": "Company",
 			"supplier_name": "Mr G"
-		}).insert()
+		}).insert(ignore_if_duplicate=True)
 	except frappe.DuplicateEntryError:
 		pass
 
@@ -229,7 +227,7 @@ def add_vouchers():
 			"supplier_group":"All Supplier Groups",
 			"supplier_type": "Company",
 			"supplier_name": "Poore Simon's"
-		}).insert()
+		}).insert(ignore_if_duplicate=True)
 	except frappe.DuplicateEntryError:
 		pass
 
@@ -239,7 +237,7 @@ def add_vouchers():
 			"customer_group":"All Customer Groups",
 			"customer_type": "Company",
 			"customer_name": "Poore Simon's"
-		}).insert()
+		}).insert(ignore_if_duplicate=True)
 	except frappe.DuplicateEntryError:
 		pass
 
@@ -268,7 +266,7 @@ def add_vouchers():
 			"customer_group":"All Customer Groups",
 			"customer_type": "Company",
 			"customer_name": "Fayva"
-		}).insert()
+		}).insert(ignore_if_duplicate=True)
 	except frappe.DuplicateEntryError:
 		pass
 

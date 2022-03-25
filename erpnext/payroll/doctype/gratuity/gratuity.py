@@ -1,8 +1,6 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2020, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-from __future__ import unicode_literals
 
 from math import floor
 
@@ -23,7 +21,10 @@ class Gratuity(AccountsController):
 			self.status = "Unpaid"
 
 	def on_submit(self):
-		self.create_gl_entries()
+		if self.pay_via_salary_slip:
+			self.create_additional_salary()
+		else:
+			self.create_gl_entries()
 
 	def on_cancel(self):
 		self.ignore_linked_doctypes = ['GL Entry']
@@ -65,6 +66,19 @@ class Gratuity(AccountsController):
 			frappe.throw(_("Total Amount can not be zero"))
 
 		return gl_entry
+
+	def create_additional_salary(self):
+		if self.pay_via_salary_slip:
+			additional_salary = frappe.new_doc('Additional Salary')
+			additional_salary.employee = self.employee
+			additional_salary.salary_component = self.salary_component
+			additional_salary.overwrite_salary_structure_amount = 0
+			additional_salary.amount = self.amount
+			additional_salary.payroll_date = self.payroll_date
+			additional_salary.company = self.company
+			additional_salary.ref_doctype = self.doctype
+			additional_salary.ref_docname = self.name
+			additional_salary.submit()
 
 	def set_total_advance_paid(self):
 		paid_amount = frappe.db.sql("""
@@ -195,7 +209,7 @@ def get_total_applicable_component_amount(employee, applicable_earnings_componen
 	sal_slip  = get_last_salary_slip(employee)
 	if not sal_slip:
 		frappe.throw(_("No Salary Slip is found for Employee: {0}").format(bold(employee)))
-	component_and_amounts = frappe.get_list("Salary Detail",
+	component_and_amounts = frappe.get_all("Salary Detail",
 		filters={
 			"docstatus": 1,
 			'parent': sal_slip,

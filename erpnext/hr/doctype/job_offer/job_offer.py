@@ -1,7 +1,6 @@
 # Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors and contributors
 # For license information, please see license.txt
 
-from __future__ import unicode_literals
 
 import frappe
 from frappe import _
@@ -79,6 +78,7 @@ def make_employee(source_name, target_doc=None):
 				"doctype": "Employee",
 				"field_map": {
 					"applicant_name": "employee_name",
+					"offer_date": "scheduled_confirmation_date"
 				}}
 		}, target_doc, set_missing_values)
 	return doc

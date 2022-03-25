@@ -15,8 +15,17 @@ erpnext.accounts.SalesInvoiceController = class SalesInvoiceController extends e
 
 		let me = this;
 		if (this.frm.doc.company) {
-			frappe.db.get_value('Company', this.frm.doc.company, 'default_receivable_account', (r) => {
-				me.frm.set_value('debit_to', r.default_receivable_account);
+			frappe.call({
+				method:
+					"erpnext.accounts.party.get_party_account",
+				args: {
+					party_type: 'Customer',
+					party: this.frm.doc.customer,
+					company: this.frm.doc.company
+				},
+				callback: (response) => {
+					if (response) me.frm.set_value("debit_to", response.message);
+				},
 			});
 		}
 	}
@@ -460,7 +469,7 @@ erpnext.accounts.SalesInvoiceController = class SalesInvoiceController extends e
 				let row = frappe.get_doc(d.doctype, d.name)
 				set_timesheet_detail_rate(row.doctype, row.name, me.frm.doc.currency, row.timesheet_detail)
 			});
-			frm.trigger("calculate_timesheet_totals");
+			this.frm.trigger("calculate_timesheet_totals");
 		}
 	}
 };
@@ -504,15 +513,6 @@ cur_frm.fields_dict.write_off_cost_center.get_query = function(doc) {
 			'is_group': 0,
 			'company': doc.company
 		}
-	}
-}
-
-// project name
-//--------------------------
-cur_frm.fields_dict['project'].get_query = function(doc, cdt, cdn) {
-	return{
-		query: "erpnext.controllers.queries.get_project_name",
-		filters: {'customer': doc.customer}
 	}
 }
 
@@ -969,7 +969,7 @@ frappe.ui.form.on('Sales Invoice', {
 		}
 
 		if (frm.doc.is_debit_note) {
-			frm.set_df_property('return_against', 'label', 'Adjustment Against');
+			frm.set_df_property('return_against', 'label', __('Adjustment Against'));
 		}
 
 		if (frappe.boot.active_domains.includes("Healthcare")) {
@@ -979,10 +979,10 @@ frappe.ui.form.on('Sales Invoice', {
 			if (cint(frm.doc.docstatus==0) && cur_frm.page.current_view_name!=="pos" && !frm.doc.is_return) {
 				frm.add_custom_button(__('Healthcare Services'), function() {
 					get_healthcare_services_to_invoice(frm);
-				},"Get Items From");
+				},__("Get Items From"));
 				frm.add_custom_button(__('Prescriptions'), function() {
 					get_drugs_to_invoice(frm);
-				},"Get Items From");
+				},__("Get Items From"));
 			}
 		}
 		else {

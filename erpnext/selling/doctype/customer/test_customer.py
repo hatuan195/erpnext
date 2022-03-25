@@ -1,12 +1,10 @@
 # Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
-from __future__ import unicode_literals
-
-import unittest
 
 import frappe
 from frappe.test_runner import make_test_records
+from frappe.tests.utils import FrappeTestCase
 from frappe.utils import flt
 
 from erpnext.accounts.party import get_due_date
@@ -18,10 +16,9 @@ test_ignore = ["Price List"]
 test_dependencies = ['Payment Term', 'Payment Terms Template']
 test_records = frappe.get_test_records('Customer')
 
-from six import iteritems
 
 
-class TestCustomer(unittest.TestCase):
+class TestCustomer(FrappeTestCase):
 	def setUp(self):
 		if not frappe.get_value('Item', '_Test Item'):
 			make_test_records('Item')
@@ -91,7 +88,7 @@ class TestCustomer(unittest.TestCase):
 
 		details = get_party_details("_Test Customer")
 
-		for key, value in iteritems(to_check):
+		for key, value in to_check.items():
 			val = details.get(key)
 			if not val and not isinstance(val, list):
 				val = None

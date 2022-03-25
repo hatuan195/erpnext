@@ -1,7 +1,6 @@
 # Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
-from __future__ import unicode_literals
 
 import frappe
 from frappe.utils.nestedset import NestedSet, get_root_of
@@ -33,7 +32,7 @@ class Department(NestedSet):
 		return new
 
 	def on_update(self):
-		if not frappe.local.flags.ignore_update_nsm:
+		if not (frappe.local.flags.ignore_update_nsm or frappe.flags.in_setup_wizard):
 			super(Department, self).on_update()
 
 	def on_trash(self):

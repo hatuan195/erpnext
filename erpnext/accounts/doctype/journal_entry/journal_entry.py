@@ -1,14 +1,12 @@
 # Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
-from __future__ import unicode_literals
 
 import json
 
 import frappe
 from frappe import _, msgprint, scrub
 from frappe.utils import cint, cstr, flt, fmt_money, formatdate, get_link_to_form, nowdate
-from six import iteritems, string_types
 
 import erpnext
 from erpnext.accounts.deferred_revenue import get_deferred_booking_accounts
@@ -117,7 +115,7 @@ class JournalEntry(AccountsController):
 				if d.reference_type in ("Sales Order", "Purchase Order", "Employee Advance"):
 					advance_paid.setdefault(d.reference_type, []).append(d.reference_name)
 
-		for voucher_type, order_list in iteritems(advance_paid):
+		for voucher_type, order_list in advance_paid.items():
 			for voucher_no in list(set(order_list)):
 				frappe.get_doc(voucher_type, voucher_no).set_total_advance_paid()
 
@@ -409,13 +407,14 @@ class JournalEntry(AccountsController):
 						debit_or_credit = 'Debit' if d.debit else 'Credit'
 						party_account = get_deferred_booking_accounts(d.reference_type, d.reference_detail_no,
 							debit_or_credit)
+						against_voucher = ['', against_voucher[1]]
 					else:
 						if d.reference_type == "Sales Invoice":
 							party_account = get_party_account_based_on_invoice_discounting(d.reference_name) or against_voucher[1]
 						else:
 							party_account = against_voucher[1]
 
-					if (against_voucher[0] != d.party or party_account != d.account):
+					if (against_voucher[0] != cstr(d.party) or party_account != d.account):
 						frappe.throw(_("Row {0}: Party / Account does not match with {1} / {2} in {3} {4}")
 							.format(d.idx, field_dict.get(d.reference_type)[0], field_dict.get(d.reference_type)[1],
 								d.reference_type, d.reference_name))
@@ -432,7 +431,7 @@ class JournalEntry(AccountsController):
 
 	def validate_orders(self):
 		"""Validate totals, closed and docstatus for orders"""
-		for reference_name, total in iteritems(self.reference_totals):
+		for reference_name, total in self.reference_totals.items():
 			reference_type = self.reference_types[reference_name]
 			account = self.reference_accounts[reference_name]
 
@@ -463,7 +462,7 @@ class JournalEntry(AccountsController):
 
 	def validate_invoices(self):
 		"""Validate totals and docstatus for invoices"""
-		for reference_name, total in iteritems(self.reference_totals):
+		for reference_name, total in self.reference_totals.items():
 			reference_type = self.reference_types[reference_name]
 
 			if (reference_type in ("Sales Invoice", "Purchase Invoice") and
@@ -480,13 +479,22 @@ class JournalEntry(AccountsController):
 
 	def set_against_account(self):
 		accounts_debited, accounts_credited = [], []
-		for d in self.get("accounts"):
-			if flt(d.debit > 0): accounts_debited.append(d.party or d.account)
-			if flt(d.credit) > 0: accounts_credited.append(d.party or d.account)
+		if self.voucher_type in ('Deferred Revenue', 'Deferred Expense'):
+			for d in self.get('accounts'):
+				if d.reference_type == 'Sales Invoice':
+					field = 'customer'
+				else:
+					field = 'supplier'
 
-		for d in self.get("accounts"):
-			if flt(d.debit > 0): d.against_account = ", ".join(list(set(accounts_credited)))
-			if flt(d.credit > 0): d.against_account = ", ".join(list(set(accounts_debited)))
+				d.against_account = frappe.db.get_value(d.reference_type, d.reference_name, field)
+		else:
+			for d in self.get("accounts"):
+				if flt(d.debit > 0): accounts_debited.append(d.party or d.account)
+				if flt(d.credit) > 0: accounts_credited.append(d.party or d.account)
+
+			for d in self.get("accounts"):
+				if flt(d.debit > 0): d.against_account = ", ".join(list(set(accounts_credited)))
+				if flt(d.credit > 0): d.against_account = ", ".join(list(set(accounts_debited)))
 
 	def validate_debit_credit_amount(self):
 		for d in self.get('accounts'):
@@ -1008,7 +1016,7 @@ def get_outstanding(args):
 	if not frappe.has_permission("Account"):
 		frappe.msgprint(_("No Permission"), raise_exception=1)
 
-	if isinstance(args, string_types):
+	if isinstance(args, str):
 		args = json.loads(args)
 
 	company_currency = erpnext.get_company_currency(args.get("company"))
@@ -1159,9 +1167,8 @@ def make_inter_company_journal_entry(name, voucher_type, company):
 def make_reverse_journal_entry(source_name, target_doc=None):
 	from frappe.model.mapper import get_mapped_doc
 
-	def update_accounts(source, target, source_parent):
-		target.reference_type = "Journal Entry"
-		target.reference_name = source_parent.name
+	def post_process(source, target):
+		target.reversal_of = source.name
 
 	doclist = get_mapped_doc("Journal Entry", source_name, {
 		"Journal Entry": {
@@ -1179,9 +1186,8 @@ def make_reverse_journal_entry(source_name, target_doc=None):
 				"debit": "credit",
 				"credit_in_account_currency": "debit_in_account_currency",
 				"credit": "debit",
-			},
-			"postprocess": update_accounts,
+			}
 		},
-	}, target_doc)
+	}, target_doc, post_process)
 
 	return doclist

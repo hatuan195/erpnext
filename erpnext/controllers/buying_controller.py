@@ -1,10 +1,9 @@
 # Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
-from __future__ import unicode_literals
 
 import frappe
-from frappe import _, msgprint
+from frappe import ValidationError, _, msgprint
 from frappe.contacts.doctype.address.address import get_address_display
 from frappe.utils import cint, cstr, flt, getdate
 
@@ -17,6 +16,9 @@ from erpnext.controllers.subcontracting import Subcontracting
 from erpnext.stock.get_item_details import get_conversion_factor
 from erpnext.stock.utils import get_incoming_rate
 
+
+class QtyMismatchError(ValidationError):
+	pass
 
 class BuyingController(StockController, Subcontracting):
 
@@ -68,9 +70,18 @@ class BuyingController(StockController, Subcontracting):
 
 		# set contact and address details for supplier, if they are not mentioned
 		if getattr(self, "supplier", None):
-			self.update_if_missing(get_party_details(self.supplier, party_type="Supplier", ignore_permissions=self.flags.ignore_permissions,
-			doctype=self.doctype, company=self.company, party_address=self.supplier_address, shipping_address=self.get('shipping_address'),
-			fetch_payment_terms_template= not self.get('ignore_default_payment_terms_template')))
+			self.update_if_missing(
+				get_party_details(
+					self.supplier,
+					party_type="Supplier",
+					doctype=self.doctype,
+					company=self.company,
+					party_address=self.get("supplier_address"),
+					shipping_address=self.get('shipping_address'),
+					fetch_payment_terms_template= not self.get('ignore_default_payment_terms_template'),
+					ignore_permissions=self.flags.ignore_permissions
+				)
+			)
 
 		self.set_missing_item_details(for_validate)
 
@@ -238,6 +249,7 @@ class BuyingController(StockController, Subcontracting):
 						"posting_time": self.get('posting_time'),
 						"qty": -1 * flt(d.get('stock_qty')),
 						"serial_no": d.get('serial_no'),
+						"batch_no": d.get("batch_no"),
 						"company": self.company,
 						"voucher_type": self.doctype,
 						"voucher_no": self.name,
@@ -267,7 +279,8 @@ class BuyingController(StockController, Subcontracting):
 						"posting_date": self.posting_date,
 						"posting_time": self.posting_time,
 						"qty": -1 * d.consumed_qty,
-						"serial_no": d.serial_no
+						"serial_no": d.serial_no,
+						"batch_no": d.batch_no,
 					})
 
 					if rate > 0:
@@ -361,19 +374,15 @@ class BuyingController(StockController, Subcontracting):
 	def validate_accepted_rejected_qty(self):
 		for d in self.get("items"):
 			self.validate_negative_quantity(d, ["received_qty","qty", "rejected_qty"])
-			if not flt(d.received_qty) and flt(d.qty):
-				d.received_qty = flt(d.qty) - flt(d.rejected_qty)
 
-			elif not flt(d.qty) and flt(d.rejected_qty):
-				d.qty = flt(d.received_qty) - flt(d.rejected_qty)
+			if not flt(d.received_qty) and (flt(d.qty) or flt(d.rejected_qty)):
+				d.received_qty = flt(d.qty) + flt(d.rejected_qty)
 
-			elif not flt(d.rejected_qty):
-				d.rejected_qty = flt(d.received_qty) -  flt(d.qty)
-
-			val  = flt(d.qty) + flt(d.rejected_qty)
 			# Check Received Qty = Accepted Qty + Rejected Qty
+			val = flt(d.qty) + flt(d.rejected_qty)
 			if (flt(val, d.precision("received_qty")) != flt(d.received_qty, d.precision("received_qty"))):
-				frappe.throw(_("Accepted + Rejected Qty must be equal to Received quantity for Item {0}").format(d.item_code))
+				message = _("Row #{0}: Received Qty must be equal to Accepted + Rejected Qty for Item {1}").format(d.idx, d.item_code)
+				frappe.throw(msg=message, title=_("Mismatch"), exc=QtyMismatchError)
 
 	def validate_negative_quantity(self, item_row, field_list):
 		if self.is_return:
@@ -556,10 +565,13 @@ class BuyingController(StockController, Subcontracting):
 					# Check for asset naming series
 					if item_data.get('asset_naming_series'):
 						created_assets = []
-
-						for qty in range(cint(d.qty)):
-							asset = self.make_asset(d)
+						if item_data.get('is_grouped_asset'):
+							asset = self.make_asset(d, is_grouped_asset=True)
 							created_assets.append(asset)
+						else:
+							for qty in range(cint(d.qty)):
+								asset = self.make_asset(d)
+								created_assets.append(asset)
 
 						if len(created_assets) > 5:
 							# dont show asset form links if more than 5 assets are created
@@ -582,14 +594,18 @@ class BuyingController(StockController, Subcontracting):
 		for message in messages:
 			frappe.msgprint(message, title="Success", indicator="green")
 
-	def make_asset(self, row):
+	def make_asset(self, row, is_grouped_asset=False):
 		if not row.asset_location:
 			frappe.throw(_("Row {0}: Enter location for the asset item {1}").format(row.idx, row.item_code))
 
 		item_data = frappe.db.get_value('Item',
 			row.item_code, ['asset_naming_series', 'asset_category'], as_dict=1)
 
-		purchase_amount = flt(row.base_rate + row.item_tax_amount)
+		if is_grouped_asset:
+			purchase_amount = flt(row.base_amount + row.item_tax_amount)
+		else:
+			purchase_amount = flt(row.base_rate + row.item_tax_amount)
+
 		asset = frappe.get_doc({
 			'doctype': 'Asset',
 			'item_code': row.item_code,
@@ -603,6 +619,7 @@ class BuyingController(StockController, Subcontracting):
 			'calculate_depreciation': 1,
 			'purchase_receipt_amount': purchase_amount,
 			'gross_purchase_amount': purchase_amount,
+			'asset_quantity': row.qty if is_grouped_asset else 0,
 			'purchase_receipt': self.name if self.doctype == 'Purchase Receipt' else None,
 			'purchase_invoice': self.name if self.doctype == 'Purchase Invoice' else None
 		})
@@ -689,7 +706,7 @@ class BuyingController(StockController, Subcontracting):
 
 def get_asset_item_details(asset_items):
 	asset_items_data = {}
-	for d in frappe.get_all('Item', fields = ["name", "auto_create_assets", "asset_naming_series"],
+	for d in frappe.get_all('Item', fields = ["name", "auto_create_assets", "asset_naming_series", "is_grouped_asset"],
 		filters = {'name': ('in', asset_items)}):
 		asset_items_data.setdefault(d.name, d)
 

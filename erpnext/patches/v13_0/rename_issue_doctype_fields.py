@@ -1,7 +1,6 @@
 # Copyright (c) 2020, Frappe and Contributors
 # License: GNU General Public License v3. See license.txt
 
-from __future__ import unicode_literals
 
 import frappe
 from frappe.model.utils.rename_field import rename_field
@@ -61,7 +60,7 @@ def execute():
 
 def convert_to_seconds(value, unit):
 	seconds = 0
-	if value == 0:
+	if not value:
 		return seconds
 	if unit == 'Hours':
 		seconds = value * 3600

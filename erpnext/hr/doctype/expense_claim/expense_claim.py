@@ -1,7 +1,6 @@
 # Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
-from __future__ import unicode_literals
 
 import frappe
 from frappe import _
@@ -24,10 +23,10 @@ class ExpenseClaim(AccountsController):
 
 	def validate(self):
 		validate_active_employee(self.employee)
-		self.validate_advances()
+		set_employee_name(self)
 		self.validate_sanctioned_amount()
 		self.calculate_total_amount()
-		set_employee_name(self)
+		self.validate_advances()
 		self.set_expense_account(validate=True)
 		self.set_payable_account()
 		self.set_cost_center()
@@ -43,10 +42,18 @@ class ExpenseClaim(AccountsController):
 			"2": "Cancelled"
 		}[cstr(self.docstatus or 0)]
 
-		paid_amount = flt(self.total_amount_reimbursed) + flt(self.total_advance_amount)
 		precision = self.precision("grand_total")
-		if (self.is_paid or (flt(self.total_sanctioned_amount) > 0 and self.docstatus == 1
-			and flt(self.grand_total, precision) == flt(paid_amount, precision))) and self.approval_status == 'Approved':
+
+		if (
+			# set as paid
+			self.is_paid
+			or (flt(self.total_sanctioned_amount > 0) and (
+				# grand total is reimbursed
+				(self.docstatus == 1 and flt(self.grand_total, precision) == flt(self.total_amount_reimbursed, precision))
+				# grand total (to be paid) is 0 since linked advances already cover the claimed amount
+				or (flt(self.grand_total, precision) == 0)
+			))
+		) and self.approval_status == "Approved":
 			status = "Paid"
 		elif flt(self.total_sanctioned_amount) > 0 and self.docstatus == 1 and self.approval_status == 'Approved':
 			status = "Unpaid"
@@ -342,18 +349,27 @@ def get_expense_claim_account(expense_claim_type, company):
 
 @frappe.whitelist()
 def get_advances(employee, advance_id=None):
-	if not advance_id:
-		condition = 'docstatus=1 and employee={0} and paid_amount > 0 and paid_amount > claimed_amount + return_amount'.format(frappe.db.escape(employee))
-	else:
-		condition = 'name={0}'.format(frappe.db.escape(advance_id))
+	advance = frappe.qb.DocType("Employee Advance")
 
-	return frappe.db.sql("""
-		select
-			name, posting_date, paid_amount, claimed_amount, advance_account
-		from
-			`tabEmployee Advance`
-		where {0}
-	""".format(condition), as_dict=1)
+	query = (
+		frappe.qb.from_(advance)
+		.select(
+			advance.name, advance.posting_date, advance.paid_amount,
+			advance.claimed_amount, advance.advance_account
+		)
+	)
+
+	if not advance_id:
+		query = query.where(
+			(advance.docstatus == 1)
+			& (advance.employee == employee)
+			& (advance.paid_amount > 0)
+			& (advance.status.notin(["Claimed", "Returned", "Partly Claimed and Returned"]))
+		)
+	else:
+		query = query.where(advance.name == advance_id)
+
+	return query.run(as_dict=True)
 
 
 @frappe.whitelist()

@@ -1,7 +1,5 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2020, Frappe Technologies Pvt. Ltd. and Contributors
 # See license.txt
-from __future__ import unicode_literals
 
 import copy
 import unittest
@@ -342,6 +340,7 @@ class TestPOSInvoice(unittest.TestCase):
 			item=se.get("items")[0].item_code, rate=1000, do_not_save=1)
 
 		si.get("items")[0].serial_no = serial_nos[0]
+		si.update_stock = 1
 		si.insert()
 		si.submit()
 
@@ -355,6 +354,24 @@ class TestPOSInvoice(unittest.TestCase):
 
 		pos2.insert()
 		self.assertRaises(frappe.ValidationError, pos2.submit)
+
+	def test_invalid_serial_no_validation(self):
+		from erpnext.stock.doctype.stock_entry.test_stock_entry import make_serialized_item
+
+		se = make_serialized_item(company='_Test Company',
+			target_warehouse="Stores - _TC", cost_center='Main - _TC', expense_account='Cost of Goods Sold - _TC')
+		serial_nos = se.get("items")[0].serial_no + 'wrong'
+
+		pos = create_pos_invoice(company='_Test Company', debit_to='Debtors - _TC',
+			account_for_change_amount='Cash - _TC', warehouse='Stores - _TC', income_account='Sales - _TC',
+			expense_account='Cost of Goods Sold - _TC', cost_center='Main - _TC',
+			item=se.get("items")[0].item_code, rate=1000, qty=2, do_not_save=1)
+
+		pos.get('items')[0].has_serial_no = 1
+		pos.get('items')[0].serial_no = serial_nos
+		pos.insert()
+
+		self.assertRaises(frappe.ValidationError, pos.submit)
 
 	def test_loyalty_points(self):
 		from erpnext.accounts.doctype.loyalty_program.loyalty_program import (
@@ -523,6 +540,150 @@ class TestPOSInvoice(unittest.TestCase):
 		rounded_total = frappe.db.get_value("Sales Invoice", pos_inv2.consolidated_invoice, "rounded_total")
 		self.assertEqual(rounded_total, 400)
 
+	def test_pos_batch_item_qty_validation(self):
+		from erpnext.stock.doctype.stock_reconciliation.test_stock_reconciliation import (
+			create_batch_item_with_batch,
+		)
+		create_batch_item_with_batch('_BATCH ITEM', 'TestBatch 01')
+		item = frappe.get_doc('Item', '_BATCH ITEM')
+		batch = frappe.get_doc('Batch', 'TestBatch 01')
+		batch.submit()
+		item.batch_no = 'TestBatch 01'
+		item.save()
+
+		se = make_stock_entry(target="_Test Warehouse - _TC", item_code="_BATCH ITEM", qty=2, basic_rate=100, batch_no='TestBatch 01')
+
+		pos_inv1 = create_pos_invoice(item=item.name, rate=300, qty=1, do_not_submit=1)
+		pos_inv1.items[0].batch_no = 'TestBatch 01'
+		pos_inv1.save()
+		pos_inv1.submit()
+
+		pos_inv2 = create_pos_invoice(item=item.name, rate=300, qty=2, do_not_submit=1)
+		pos_inv2.items[0].batch_no = 'TestBatch 01'
+		pos_inv2.save()
+
+		self.assertRaises(frappe.ValidationError, pos_inv2.submit)
+
+		#teardown
+		pos_inv1.reload()
+		pos_inv1.cancel()
+		pos_inv1.delete()
+		pos_inv2.reload()
+		pos_inv2.delete()
+		se.cancel()
+		batch.reload()
+		batch.cancel()
+		batch.delete()
+
+	def test_ignore_pricing_rule(self):
+		from erpnext.accounts.doctype.pricing_rule.test_pricing_rule import make_pricing_rule
+
+		item_price = frappe.get_doc({
+			'doctype': 'Item Price',
+			'item_code': '_Test Item',
+			'price_list': '_Test Price List',
+			'price_list_rate': '450',
+		})
+		item_price.insert()
+		pr = make_pricing_rule(selling=1, priority=5, discount_percentage=10)
+		pr.save()
+
+		try:
+			pos_inv = create_pos_invoice(qty=1, do_not_submit=1)
+			pos_inv.items[0].rate = 300
+			pos_inv.save()
+			self.assertEquals(pos_inv.items[0].discount_percentage, 10)
+			# rate shouldn't change
+			self.assertEquals(pos_inv.items[0].rate, 405)
+
+			pos_inv.ignore_pricing_rule = 1
+			pos_inv.save()
+			self.assertEquals(pos_inv.ignore_pricing_rule, 1)
+			# rate should reset since pricing rules are ignored
+			self.assertEquals(pos_inv.items[0].rate, 450)
+
+			pos_inv.items[0].rate = 300
+			pos_inv.save()
+			self.assertEquals(pos_inv.items[0].rate, 300)
+
+		finally:
+			item_price.delete()
+			pos_inv.delete()
+			pr.delete()
+
+	def test_delivered_serial_no_case(self):
+		from erpnext.accounts.doctype.pos_invoice_merge_log.test_pos_invoice_merge_log import (
+			init_user_and_profile,
+		)
+		from erpnext.stock.doctype.delivery_note.test_delivery_note import create_delivery_note
+		from erpnext.stock.doctype.serial_no.test_serial_no import get_serial_nos
+		from erpnext.stock.doctype.stock_entry.test_stock_entry import make_serialized_item
+
+		frappe.db.savepoint('before_test_delivered_serial_no_case')
+		try:
+			se = make_serialized_item()
+			serial_no = get_serial_nos(se.get("items")[0].serial_no)[0]
+
+			dn = create_delivery_note(
+					item_code="_Test Serialized Item With Series", serial_no=serial_no
+			)
+
+			delivery_document_no = frappe.db.get_value("Serial No", serial_no, "delivery_document_no")
+			self.assertEquals(delivery_document_no, dn.name)
+
+			init_user_and_profile()
+
+			pos_inv = create_pos_invoice(
+					item_code="_Test Serialized Item With Series",
+					serial_no=serial_no,
+					qty=1,
+					rate=100,
+					do_not_submit=True
+			)
+
+			self.assertRaises(frappe.ValidationError, pos_inv.submit)
+
+		finally:
+			frappe.db.rollback(save_point='before_test_delivered_serial_no_case')
+			frappe.set_user("Administrator")
+
+	def test_returned_serial_no_case(self):
+		from erpnext.accounts.doctype.pos_invoice_merge_log.test_pos_invoice_merge_log import (
+			init_user_and_profile,
+		)
+		from erpnext.stock.doctype.serial_no.serial_no import get_pos_reserved_serial_nos
+		from erpnext.stock.doctype.serial_no.test_serial_no import get_serial_nos
+		from erpnext.stock.doctype.stock_entry.test_stock_entry import make_serialized_item
+
+		frappe.db.savepoint('before_test_returned_serial_no_case')
+		try:
+			se = make_serialized_item()
+			serial_no = get_serial_nos(se.get("items")[0].serial_no)[0]
+
+			init_user_and_profile()
+
+			pos_inv = create_pos_invoice(
+					item_code="_Test Serialized Item With Series",
+					serial_no=serial_no,
+					qty=1,
+					rate=100,
+			)
+
+			pos_return = make_sales_return(pos_inv.name)
+			pos_return.flags.ignore_validate = True
+			pos_return.insert()
+			pos_return.submit()
+
+			pos_reserved_serial_nos = get_pos_reserved_serial_nos({
+				'item_code': '_Test Serialized Item With Series',
+				'warehouse': '_Test Warehouse - _TC'
+			})
+			self.assertTrue(serial_no not in pos_reserved_serial_nos)
+
+		finally:
+			frappe.db.rollback(save_point='before_test_returned_serial_no_case')
+			frappe.set_user("Administrator")
+
 def create_pos_invoice(**args):
 	args = frappe._dict(args)
 	pos_profile = None
@@ -559,7 +720,8 @@ def create_pos_invoice(**args):
 		"income_account": args.income_account or "Sales - _TC",
 		"expense_account": args.expense_account or "Cost of Goods Sold - _TC",
 		"cost_center": args.cost_center or "_Test Cost Center - _TC",
-		"serial_no": args.serial_no
+		"serial_no": args.serial_no,
+		"batch_no": args.batch_no
 	})
 
 	if not args.do_not_save:
@@ -572,3 +734,8 @@ def create_pos_invoice(**args):
 		pos_inv.payment_schedule = []
 
 	return pos_inv
+
+def make_batch_item(item_name):
+	from erpnext.stock.doctype.item.test_item import make_item
+	if not frappe.db.exists(item_name):
+		return make_item(item_name, dict(has_batch_no = 1, create_new_batch = 1, is_stock_item=1))

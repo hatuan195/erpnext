@@ -1,7 +1,5 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2018, Frappe Technologies Pvt. Ltd. and Contributors
 # See license.txt
-from __future__ import unicode_literals
 
 import unittest
 
@@ -26,6 +24,7 @@ def create_leave_policy(**args):
 	args = frappe._dict(args)
 	return frappe.get_doc({
 		"doctype": "Leave Policy",
+		"title": "Test Leave Policy",
 		"leave_policy_details": [{
 			"leave_type": args.leave_type or "_Test Leave Type",
 			"annual_allocation": args.annual_allocation or 10

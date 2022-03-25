@@ -1,8 +1,6 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2019, Frappe Technologies and contributors
 # For license information, please see license.txt
 
-from __future__ import unicode_literals
 
 import csv
 import json
@@ -17,8 +15,8 @@ from frappe.utils.background_jobs import enqueue
 from frappe.utils.xlsxutils import ILLEGAL_CHARACTERS_RE, handle_html
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
-from six import string_types
 
+INVALID_VALUES = ("", None)
 
 class BankStatementImport(DataImport):
 	def __init__(self, *args, **kwargs):
@@ -98,6 +96,18 @@ def download_errored_template(data_import_name):
 	data_import = frappe.get_doc("Bank Statement Import", data_import_name)
 	data_import.export_errored_rows()
 
+def parse_data_from_template(raw_data):
+	data = []
+
+	for i, row in enumerate(raw_data):
+		if all(v in INVALID_VALUES for v in row):
+			# empty row
+			continue
+
+		data.append(row)
+
+	return data
+
 def start_import(data_import, bank_account, import_file_path, google_sheets_url, bank, template_options):
 	"""This method runs in background job"""
 
@@ -107,7 +117,8 @@ def start_import(data_import, bank_account, import_file_path, google_sheets_url,
 	file = import_file_path if import_file_path else google_sheets_url
 
 	import_file = ImportFile("Bank Transaction", file = file, import_type="Insert New Records")
-	data = import_file.raw_data
+
+	data = parse_data_from_template(import_file.raw_data)
 
 	if import_file_path:
 		add_bank_account(data, bank_account)
@@ -181,12 +192,12 @@ def write_xlsx(data, sheet_name, wb=None, column_widths=None, file_path=None):
 	for row in data:
 		clean_row = []
 		for item in row:
-			if isinstance(item, string_types) and (sheet_name not in ['Data Import Template', 'Data Export']):
+			if isinstance(item, str) and (sheet_name not in ['Data Import Template', 'Data Export']):
 				value = handle_html(item)
 			else:
 				value = item
 
-			if isinstance(item, string_types) and next(ILLEGAL_CHARACTERS_RE.finditer(value), None):
+			if isinstance(item, str) and next(ILLEGAL_CHARACTERS_RE.finditer(value), None):
 				# Remove illegal characters from the string
 				value = re.sub(ILLEGAL_CHARACTERS_RE, '', value)
 

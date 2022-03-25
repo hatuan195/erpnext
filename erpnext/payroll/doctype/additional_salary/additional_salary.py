@@ -1,8 +1,6 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2018, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-from __future__ import unicode_literals
 
 import frappe
 from frappe import _, bold
@@ -107,6 +105,8 @@ class AdditionalSalary(Document):
 				return_amount += self.amount
 
 			frappe.db.set_value("Employee Advance", self.ref_docname, "return_amount", return_amount)
+			advance = frappe.get_doc("Employee Advance", self.ref_docname)
+			advance.set_status(update=True)
 
 	def update_employee_referral(self, cancel=False):
 		if self.ref_doctype == "Employee Referral":

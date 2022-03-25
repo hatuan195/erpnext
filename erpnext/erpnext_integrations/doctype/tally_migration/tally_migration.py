@@ -1,8 +1,6 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2019, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-from __future__ import unicode_literals
 
 import json
 import re
@@ -84,7 +82,7 @@ class TallyMigration(Document):
 				"is_private": True
 			})
 			try:
-				f.insert()
+				f.insert(ignore_if_duplicate=True)
 			except frappe.DuplicateEntryError:
 				pass
 			setattr(self, key, f.file_url)

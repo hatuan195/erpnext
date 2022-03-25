@@ -1,7 +1,5 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2018, Frappe Technologies Pvt. Ltd. and Contributors
 # See license.txt
-from __future__ import unicode_literals
 
 import unittest
 
@@ -41,9 +39,6 @@ def test_create_test_data():
 		"selling_cost_center": "Main - _TC",
 		"income_account": "Sales - _TC"
 		}],
-		"show_in_website": 1,
-		"route":"-test-tesla-car",
-		"website_warehouse": "Stores - _TC"
 		})
 		item.insert()
 	# create test item price

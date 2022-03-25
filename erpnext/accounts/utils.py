@@ -1,8 +1,6 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
-from __future__ import unicode_literals
 
 from json import loads
 
@@ -11,7 +9,6 @@ import frappe.defaults
 from frappe import _, throw
 from frappe.model.meta import get_field_precision
 from frappe.utils import cint, cstr, flt, formatdate, get_number_format_info, getdate, now, nowdate
-from six import string_types
 
 import erpnext
 
@@ -797,7 +794,7 @@ def get_children(doctype, parent, company, is_root=False):
 @frappe.whitelist()
 def get_account_balances(accounts, company):
 
-	if isinstance(accounts, string_types):
+	if isinstance(accounts, str):
 		accounts = loads(accounts)
 
 	if not accounts:
@@ -850,7 +847,7 @@ def create_payment_gateway_account(gateway, payment_channel="Email"):
 			"payment_account": bank_account.name,
 			"currency": bank_account.account_currency,
 			"payment_channel": payment_channel
-		}).insert(ignore_permissions=True)
+		}).insert(ignore_permissions=True, ignore_if_duplicate=True)
 
 	except frappe.DuplicateEntryError:
 		# already exists, due to a reinstall?

@@ -2,7 +2,6 @@
 
 # For license information, please see license.txt
 
-from __future__ import unicode_literals
 
 import copy
 import json
@@ -12,7 +11,6 @@ import frappe
 from frappe import _, throw
 from frappe.model.document import Document
 from frappe.utils import cint, flt, getdate
-from six import string_types
 
 apply_on_dict = {"Item Code": "items",
 	"Item Group": "item_groups", "Brand": "brands"}
@@ -179,7 +177,7 @@ def apply_pricing_rule(args, doc=None):
 		}
 	"""
 
-	if isinstance(args, string_types):
+	if isinstance(args, str):
 		args = json.loads(args)
 
 	args = frappe._dict(args)
@@ -235,7 +233,7 @@ def get_pricing_rule_for_item(args, price_list_rate=0, doc=None, for_validate=Fa
 		get_product_discount_rule,
 	)
 
-	if isinstance(doc, string_types):
+	if isinstance(doc, str):
 		doc = json.loads(doc)
 
 	if doc:
@@ -251,13 +249,17 @@ def get_pricing_rule_for_item(args, price_list_rate=0, doc=None, for_validate=Fa
 		"free_item_data": [],
 		"parent": args.parent,
 		"parenttype": args.parenttype,
-		"child_docname": args.get('child_docname')
+		"child_docname": args.get('child_docname'),
 	})
 
 	if args.ignore_pricing_rule or not args.item_code:
 		if frappe.db.exists(args.doctype, args.name) and args.get("pricing_rules"):
-			item_details = remove_pricing_rule_for_item(args.get("pricing_rules"),
-				item_details, args.get('item_code'))
+			item_details = remove_pricing_rule_for_item(
+				args.get("pricing_rules"),
+				item_details,
+				item_code=args.get("item_code"),
+				rate=args.get("price_list_rate"),
+			)
 		return item_details
 
 	update_args_for_pricing_rule(args)
@@ -271,7 +273,7 @@ def get_pricing_rule_for_item(args, price_list_rate=0, doc=None, for_validate=Fa
 		for pricing_rule in pricing_rules:
 			if not pricing_rule: continue
 
-			if isinstance(pricing_rule, string_types):
+			if isinstance(pricing_rule, str):
 				pricing_rule = frappe.get_cached_doc("Pricing Rule", pricing_rule)
 				pricing_rule.apply_rule_on_other_items = get_pricing_rule_items(pricing_rule)
 
@@ -310,8 +312,12 @@ def get_pricing_rule_for_item(args, price_list_rate=0, doc=None, for_validate=Fa
 		if not doc: return item_details
 
 	elif args.get("pricing_rules"):
-		item_details = remove_pricing_rule_for_item(args.get("pricing_rules"),
-			item_details, args.get('item_code'))
+		item_details = remove_pricing_rule_for_item(
+			args.get("pricing_rules"),
+			item_details,
+			item_code=args.get("item_code"),
+			rate=args.get("price_list_rate"),
+		)
 
 	return item_details
 
@@ -392,7 +398,7 @@ def apply_price_discount_rule(pricing_rule, item_details, args):
 			item_details[field] += (pricing_rule.get(field, 0)
 				if pricing_rule else args.get(field, 0))
 
-def remove_pricing_rule_for_item(pricing_rules, item_details, item_code=None):
+def remove_pricing_rule_for_item(pricing_rules, item_details, item_code=None, rate=None):
 	from erpnext.accounts.doctype.pricing_rule.utils import (
 		get_applied_pricing_rules,
 		get_pricing_rule_items,
@@ -405,6 +411,7 @@ def remove_pricing_rule_for_item(pricing_rules, item_details, item_code=None):
 			if pricing_rule.rate_or_discount == 'Discount Percentage':
 				item_details.discount_percentage = 0.0
 				item_details.discount_amount = 0.0
+				item_details.rate = rate or 0.0
 
 			if pricing_rule.rate_or_discount == 'Discount Amount':
 				item_details.discount_amount = 0.0
@@ -423,20 +430,24 @@ def remove_pricing_rule_for_item(pricing_rules, item_details, item_code=None):
 			item_details.applied_on_items = ','.join(items)
 
 	item_details.pricing_rules = ''
+	item_details.pricing_rule_removed = True
 
 	return item_details
 
 @frappe.whitelist()
 def remove_pricing_rules(item_list):
-	if isinstance(item_list, string_types):
+	if isinstance(item_list, str):
 		item_list = json.loads(item_list)
 
 	out = []
 	for item in item_list:
 		item = frappe._dict(item)
-		if item.get('pricing_rules'):
-			out.append(remove_pricing_rule_for_item(item.get("pricing_rules"),
-				item, item.item_code))
+		if item.get("pricing_rules"):
+			out.append(
+				remove_pricing_rule_for_item(
+					item.get("pricing_rules"), item, item.item_code, item.get("price_list_rate")
+				)
+			)
 
 	return out
 
